@@ -1,0 +1,71 @@
+// ===============================================
+// 1. PROJECT SETUP (BLE and Player Number)
+// ===============================================
+
+#include "ble_functions.h" 
+const int PLAYER_NUMBER = 18; 
+
+// --- 2. PIN & THRESHOLD DEFINITIONS ---
+const int UP_SENSOR_PIN = A2;     
+const int DOWN_SENSOR_PIN = A3;   
+const int MIDDLE_SENSOR_PIN = A4; 
+const int BUZZER_PIN = 9;       
+const int LED_PIN = LED_BUILTIN; 
+
+// --- DIGITAL CONTROL CONSTANTS (Stable Settings) ---
+const int MIN_ACTIVATION = 150; 
+const int HYSTERESIS_MARGIN = 50; 
+const int DIGITAL_TRIGGER_MARGIN = 100; 
+
+
+// --- 3. BUZZER FUNCTIONS ---
+void playBEEP() { tone(BUZZER_PIN, 2000, 50); }
+void playBOOP() { tone(BUZZER_PIN, 500, 75); }
+
+// --- 4. SETUP FUNCTION ---
+void setup() {
+  Serial.begin(115200); 
+  
+  // *** CRITICAL FIX: REMOVED while (!Serial); ***
+  // This line is often the source of conflicts with BLE/Setup timing.
+  
+  pinMode(BUZZER_PIN, OUTPUT); 
+  setupBLE("DF-Pong", PLAYER_NUMBER, LED_BUILTIN); 
+}
+
+// --- 5. MAIN LOOP (The Control Logic) ---
+void loop() {
+  updateBLE(); 
+  
+  // B. Read the pressure from FSR zones
+  int upValue = analogRead(UP_SENSOR_PIN);
+  int downValue = analogRead(DOWN_SENSOR_PIN);
+  int rawDifference = upValue - downValue; 
+  int finalCommand = 0; // Final command must be 0, 1, or 2
+
+  // C. Implement Stable Differential Logic and map to FIXED commands
+  if (rawDifference > DIGITAL_TRIGGER_MARGIN && upValue > MIN_ACTIVATION) {
+    finalCommand = 1; // Send FIXED UP command
+    playBEEP();
+  }
+  else if (rawDifference < -DIGITAL_TRIGGER_MARGIN && downValue > MIN_ACTIVATION) {
+    finalCommand = 2; // Send FIXED DOWN command
+    playBOOP();
+  }
+  else {
+    finalCommand = 0; // Send FIXED STOP command
+  }
+
+  // D. DEBUGGING: Print values 
+  Serial.print("UP(A2): ");
+  Serial.print(upValue);
+  Serial.print(" | DOWN(A3): ");
+  Serial.print(downValue);
+  Serial.print(" | COMMAND: ");
+  Serial.println(finalCommand);
+  
+  // E. Send the command wirelessly via BLE 
+  sendMovement(finalCommand); 
+  
+  delay(20); 
+}

@@ -1,35 +1,37 @@
 // ===============================================
-// 1. PROJECT SETUP (BLE and Player Number)
+// FINAL CODE: STABLE SELF-CYCLING WITH STRICT DEAD ZONE
 // ===============================================
 
 #include "ble_functions.h" 
 const int PLAYER_NUMBER = 18; 
 
+// --- 1. MOVEMENT STATE ---
+int cycleDirection = 1;
+unsigned long lastCycleTime = 0;
+
 // --- 2. PIN & THRESHOLD DEFINITIONS ---
 const int UP_SENSOR_PIN = A2;     
 const int DOWN_SENSOR_PIN = A3;   
-const int MIDDLE_SENSOR_PIN = A4; 
 const int BUZZER_PIN = 9;       
 const int LED_PIN = LED_BUILTIN; 
 
-// --- DIGITAL CONTROL CONSTANTS (Stable Settings) ---
-const int MIN_ACTIVATION = 150; 
-const int HYSTERESIS_MARGIN = 50; 
-const int DIGITAL_TRIGGER_MARGIN = 100; 
+// --- CONTROL CONSTANTS (Stable Flow) ---
+const int ACTIVATION_THRESHOLD = 600; 
+const int DIRECTION_DOMINANCE_MARGIN = 150; 
+const int CYCLE_TIME_MS = 75; 
+const int DOWN_BIAS_CORRECTION = 150; 
 
 
-// --- 3. BUZZER FUNCTIONS ---
-void playBEEP() { tone(BUZZER_PIN, 2000, 50); }
-void playBOOP() { tone(BUZZER_PIN, 500, 75); }
+// --- 3. BUZZER FUNCTIONS (LIGHT FEEDBACK) ---
+void playBEEP() { tone(BUZZER_PIN, 2000, 20); } 
+void playBOOP() { tone(BUZZER_PIN, 500, 30); }  
 
 // --- 4. SETUP FUNCTION ---
 void setup() {
   Serial.begin(115200); 
-  
-  // *** CRITICAL FIX: REMOVED while (!Serial); ***
-  // This line is often the source of conflicts with BLE/Setup timing.
-  
   pinMode(BUZZER_PIN, OUTPUT); 
+  
+  Serial.println("Stable Self-Cycling Override Ready.");
   setupBLE("DF-Pong", PLAYER_NUMBER, LED_BUILTIN); 
 }
 
@@ -37,35 +39,54 @@ void setup() {
 void loop() {
   updateBLE(); 
   
-  // B. Read the pressure from FSR zones
+  // B. Read the pressure and APPLY BIAS CORRECTION
   int upValue = analogRead(UP_SENSOR_PIN);
-  int downValue = analogRead(DOWN_SENSOR_PIN);
-  int rawDifference = upValue - downValue; 
-  int finalCommand = 0; // Final command must be 0, 1, or 2
+  int downValueRaw = analogRead(DOWN_SENSOR_PIN);
+  
+  // Apply correction to the DOWN sensor (A3)
+  int downValue = downValueRaw - DOWN_BIAS_CORRECTION; 
+  int rawDifference = upValue - downValue;
+  
+  int finalCommand; 
 
-  // C. Implement Stable Differential Logic and map to FIXED commands
-  if (rawDifference > DIGITAL_TRIGGER_MARGIN && upValue > MIN_ACTIVATION) {
-    finalCommand = 1; // Send FIXED UP command
+  // C. Implement Pressure Override Logic
+  
+  // 1. Check for Override: UP
+  if (upValue >= ACTIVATION_THRESHOLD && rawDifference > DIRECTION_DOMINANCE_MARGIN) {
+    finalCommand = 1; 
+    cycleDirection = 1; 
     playBEEP();
   }
-  else if (rawDifference < -DIGITAL_TRIGGER_MARGIN && downValue > MIN_ACTIVATION) {
-    finalCommand = 2; // Send FIXED DOWN command
+  
+  // 2. Check for Override: DOWN
+  else if (downValue >= ACTIVATION_THRESHOLD && rawDifference < -DIRECTION_DOMINANCE_MARGIN) {
+    finalCommand = 2; 
+    cycleDirection = 2; 
     playBOOP();
   }
+  
+  // D. Implement Self-Cycling Flow (Default Behavior)
   else {
-    finalCommand = 0; // Send FIXED STOP command
+    // Check if the cycle time has expired
+    if (millis() > lastCycleTime + CYCLE_TIME_MS) {
+      // Toggle the direction
+      cycleDirection = (cycleDirection == 1) ? 2 : 1; 
+      lastCycleTime = millis();
+    }
+    finalCommand = cycleDirection; 
   }
 
-  // D. DEBUGGING: Print values 
-  Serial.print("UP(A2): ");
+  // E. DEBUGGING: Print values 
+  Serial.print("UP: ");
   Serial.print(upValue);
-  Serial.print(" | DOWN(A3): ");
+  Serial.print(" | DOWN(Adj): ");
   Serial.print(downValue);
-  Serial.print(" | COMMAND: ");
+  Serial.print(" | FINAL COMMAND: ");
   Serial.println(finalCommand);
   
-  // E. Send the command wirelessly via BLE 
+  // F. Send the command wirelessly via BLE 
   sendMovement(finalCommand); 
   
-  delay(20); 
+  // G. Small delay to prevent runaway serial output
+  delay(10); 
 }
